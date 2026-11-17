@@ -1,0 +1,55 @@
+[*] FP32 NR divider - key signals (RTL simulation, built with -DFP32_DEBUG)
+@200
+-Chip pins
+@28
+tb.clk
+tb.rst_n
+@22
+tb.ui_in[7:0]
+tb.uio_in[7:0]
+tb.uo_out[7:0]
+tb.uio_out[7:0]
+@200
+-Core handshake
+@28
+tb.user_project.u_core.start
+tb.user_project.u_core.busy
+tb.user_project.u_core.done
+tb.user_project.u_core.fault
+@24
+tb.user_project.u_core.ph[3:0]
+tb.user_project.u_core.cnt[4:0]
+@200
+-Operands and result
+@22
+tb.user_project.u_core.a[31:0]
+tb.user_project.u_core.b[31:0]
+tb.user_project.u_core.result[31:0]
+@28
+tb.user_project.u_core.flags[4:0]
+@200
+-Working registers
+@22
+tb.user_project.u_core.use_a
+tb.user_project.u_core.m_s[23:0]
+tb.user_project.u_core.M[27:0]
+tb.user_project.u_core.H[28:0]
+tb.user_project.u_core.L[31:0]
+@28
+tb.user_project.u_core.c
+@200
+-Named values (debug copies)
+@22
+tb.user_project.u_core.dbg_x0[27:0]
+tb.user_project.u_core.dbg_x1[27:0]
+tb.user_project.u_core.dbg_x2[27:0]
+tb.user_project.u_core.dbg_x3[27:0]
+tb.user_project.u_core.dbg_q1[26:0]
+@200
+-Remainder and self-check
+@28
+tb.user_project.u_core.r_neg
+tb.user_project.u_core.rem_nz
+tb.user_project.u_core.hi_ok
+@22
+tb.user_project.u_core.q[26:0]
