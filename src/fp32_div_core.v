@@ -3,8 +3,8 @@
  * Round-to-nearest-even, full subnormal support, all five IEEE flags.
  * Bit-exact with model/fp32_div_model.py.
  *
- * Register-folded, minimum-precision datapath (237 cycles per divide, up to 31
- * more when the result is subnormal; special cases 1 cycle):
+ * Register-folded, minimum-precision datapath (237 cycles per divide; up to 268
+ * when the result is subnormal; about 3 for a power-of-two divisor; special cases 1):
  *
  *   - Three working registers only: M (multiplicand), H (accumulator), L (scanned
  *     operand / low product bits). Every Newton-Raphson variable - reciprocal,
@@ -24,9 +24,9 @@
  *   - No output shifter: the quotient is normalised / denormalised by running
  *     it through {H, L} with zero multiplier digits, one bit per clock; the
  *     bits that fall into L are the sticky bits.
- *   - One adder: the quotient correction (-1) and the rounding increment both
- *     go through the multiplier's adder, so there is no separate decrementer
- *     or rounding incrementer.
+ *   - One adder: the quotient correction (-1), the rounding increment and the
+ *     remainder range comparison all go through the multiplier's adder, so there
+ *     is no separate decrementer, rounding incrementer or remainder comparator.
  *   - No result register: the packed result is written back into L, which is
  *     otherwise idle between divides. "result" is therefore only meaningful
  *     from done until the next start.

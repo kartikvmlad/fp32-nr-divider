@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "model"))
 from fp32_div_model import fp32_div  # noqa: E402
 
 WR, START = 0x04, 0x08
-TIMEOUT = 300          # clocks; a divide takes 122
+TIMEOUT = 300          # clocks; a divide takes 237, at most 268 (subnormal result)
 
 
 def pins(addr):

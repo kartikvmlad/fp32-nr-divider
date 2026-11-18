@@ -26,13 +26,14 @@ using a **Newton-Raphson reciprocal**.
 
 The whole computation runs on three working registers: a multiplicand `M`, an accumulator `H` and a shift
 register `L` that holds the scanned operand and the low product bits. The reciprocal, residual, quotient and
-remainder are never stored separately. The multiplier is radix-4 (2 bits per clock) with digit 3 recoded as
-4 - 1, so it needs no 3x multiple. The operand widths are the smallest for which the result is still exact;
-`model/verify_recip.py` proves this for every divisor mantissa.
+remainder are never stored separately. The multiplier is a radix-2 shift-and-add unit (1 bit per clock), so
+each partial product is just the multiplicand or zero. Its adder is also used for the quotient correction,
+the rounding increment and the remainder range comparison. The operand widths are the smallest for which
+the result is still exact; `model/verify_recip.py` proves this for every divisor mantissa.
 
-A divide takes about **124 clock cycles** (up to 15 more when the result is subnormal). A power-of-two divisor
-skips the reciprocal and finishes much sooner, and special cases such as 0, infinity or NaN take 1 cycle. At
-33.33 MHz one divide takes roughly 4 us.
+A divide takes **237 clock cycles**, and up to **268** when the result is subnormal. A power-of-two divisor
+skips the reciprocal and takes 3 cycles (more if the result is subnormal), and special cases such as 0,
+infinity or NaN take 1 cycle. At 33.33 MHz one divide takes about 7.1 us (8.0 us at most).
 
 **Built-in self-check**
 
