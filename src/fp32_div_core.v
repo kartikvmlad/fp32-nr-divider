@@ -160,10 +160,12 @@ module fp32_div_core (
     //   fin : digit is 0, rounding increment injected at bit 3 ->  H + 8*round
     wire        chk   = run && (cnt == 6'd0) && (ph == PH_CHK);
     wire        fin   = run && (cnt == 6'd0) && (ph == PH_DEN);
+    wire        rcm   = run && (cnt == 6'd0) && (ph == PH_REM);   // remainder comparison
     wire        d_one = (L[0] & ~fin) | chk;
     wire        rnd_inc;
-    wire [30:0] pp    = (d_one ? {3'b000, M} : 31'd0) | {27'd0, rnd_inc, 3'd0};
-    wire [28:0] h_in  = chk ? {{28{r_neg}}, 1'b0} : H;
+    wire [23:0] r_mag;
+    wire [30:0] pp    = rcm ? {7'd0, ~r_mag} : ((d_one ? {3'b000, M} : 31'd0) | {27'd0, rnd_inc, 3'd0});
+    wire [28:0] h_in  = chk ? {{28{r_neg}}, 1'b0} : rcm ? {5'd0, m_s} : H;
     wire [30:0] sum   = {{2{h_in[28]}}, h_in} + pp;
 
     // values handed from one phase to the next
@@ -232,8 +234,8 @@ module fp32_div_core (
     // above it are exactly 2*ma. Bit 24 of it is the sign of r; the low 24 bits hold
     // ~r (r >= 0) or -r - 1 (r < 0). m_s is mb at the end of PH_REM and ma in PH_CHK.
     wire        r_sgn  = L[31];
-    wire [23:0] r_mag  = L[30:7] ^ {24{~r_sgn}};         // r, or -r - 1
-    wire [24:0] r_cmp  = {1'b0, m_s} + {1'b0, ~r_mag};   // mb - r_mag - 1; carry out = (r_mag < mb)
+    assign      r_mag  = L[30:7] ^ {24{~r_sgn}};         // r, or -r - 1
+    wire [24:0] r_cmp  = sum[24:0];                      // mb - r_mag - 1 on the main adder; carry out = (r_mag < mb)
     wire        r_edge = ~|r_cmp[23:0];                  // r_mag == mb - 1, i.e. r == -mb when negative
     wire        hi_ok  = (H == {4'd0, m_s, 1'b0});
 
