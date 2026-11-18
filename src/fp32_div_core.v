@@ -3,7 +3,7 @@
  * Round-to-nearest-even, full subnormal support, all five IEEE flags.
  * Bit-exact with model/fp32_div_model.py.
  *
- * Register-folded, minimum-precision datapath (124 cycles per divide, up to 15
+ * Register-folded, minimum-precision datapath (237 cycles per divide, up to 31
  * more when the result is subnormal; special cases 1 cycle):
  *
  *   - Three working registers only: M (multiplicand), H (accumulator), L (scanned
@@ -17,12 +17,12 @@
  *   - Low-bits-only remainder: a*2^26 - q1*b lies in [-b, b), so only the low
  *     25 bits of q1*b are examined; a*2^26 contributes nothing to them. No
  *     remainder register or subtractor.
- *   - Radix-4 multiplier with digit 3 recoded as 4 - 1 (one carry flop), so no
- *     3*M adder.
+ *   - Radix-2 shift-and-add multiplier: one multiplier bit per clock, so the
+ *     partial product is just M or 0 - no 2*M select, no digit recoding.
  *   - One shared input normaliser: only one operand mantissa is ever needed in
  *     a given cycle, so a and b take turns on a single barrel shifter.
  *   - No output shifter: the quotient is normalised / denormalised by running
- *     it through {H, L} with zero multiplier digits, two bits per clock; the
+ *     it through {H, L} with zero multiplier digits, one bit per clock; the
  *     bits that fall into L are the sticky bits.
  *   - One adder: the quotient correction (-1) and the rounding increment both
  *     go through the multiplier's adder, so there is no separate decrementer
@@ -74,7 +74,7 @@ module fp32_div_core (
 
     reg       run;
     reg [3:0] ph;
-    reg [4:0] cnt;                 // radix-4 steps left in this phase; 0 = phase boundary
+    reg [5:0] cnt;                 // multiply steps left in this phase; 0 = phase boundary
     assign busy = run;
 
     // ---------------- unpack (combinational on inputs) ----------------
@@ -144,33 +144,27 @@ module fp32_div_core (
         end
     endfunction
 
-    // ---------------- datapath: M, H, L and the recode carry ----------------
-    // {H, L} shifts right two bits per step. 13-step phases (26-bit scanned
-    // operand) leave the product in {H, L[31:6]}; 16-step phases in {H, L}.
+    // ---------------- datapath: M, H, L ----------------
+    // {H, L} shifts right one bit per step. 26-step phases (26-bit scanned
+    // operand) leave the product in {H, L[31:6]}; 32-step phases in {H, L}.
     reg        [27:0] M;      // x (28 bits) or 2*q1
     reg signed [28:0] H;
     reg        [31:0] L;
-    reg               c;
     reg               r_neg;  // remainder < 0: q1 = Q + 1
     reg               rem_nz; // remainder of the corrected quotient is non-zero
     reg               nrm_r;  // quotient < 1: result exponent is one lower
     reg               tiny_r; // result is tiny after rounding (underflow if also inexact)
 
-    // The one adder. Normally a radix-4 multiply step with digit recoding
-    // (0, +M, +2M, -M with carry out, 0 with carry out). Two other uses:
+    // The one adder. Normally a radix-2 multiply step: H + (L[0] ? M : 0). Two other uses:
     //   chk : H input replaced by -2*r_neg, digit forced to 1  ->  M - 2*r_neg = 2*Q
     //   fin : digit is 0, rounding increment injected at bit 3 ->  H + 8*round
-    wire        chk   = run && (cnt == 5'd0) && (ph == PH_CHK);
-    wire        fin   = run && (cnt == 5'd0) && (ph == PH_DEN);
-    wire [2:0]  dig   = {2'b00, c} + {1'b0, L[1:0]};
-    wire        d_sub = (dig == 3'd3) & ~chk;
-    wire        d_one = (dig == 3'd1) | d_sub | chk;
-    wire        d_two = (dig == 3'd2) & ~chk;
+    wire        chk   = run && (cnt == 6'd0) && (ph == PH_CHK);
+    wire        fin   = run && (cnt == 6'd0) && (ph == PH_DEN);
+    wire        d_one = (L[0] & ~fin) | chk;
     wire        rnd_inc;
-    wire [30:0] pp_m  = d_two ? {2'b00, M, 1'b0} : d_one ? {3'b000, M} : 31'd0;
-    wire [30:0] pp    = (pp_m ^ {31{d_sub}}) | {27'd0, rnd_inc, 3'd0};
+    wire [30:0] pp    = (d_one ? {3'b000, M} : 31'd0) | {27'd0, rnd_inc, 3'd0};
     wire [28:0] h_in  = chk ? {{28{r_neg}}, 1'b0} : H;
-    wire [30:0] sum   = {{2{h_in[28]}}, h_in} + pp + {30'd0, d_sub};
+    wire [30:0] sum   = {{2{h_in[28]}}, h_in} + pp;
 
     // values handed from one phase to the next
     wire [29:0] resid = ~{H[24:0], L[31:27]};            // 1 - b*x, bits 2^-1 .. 2^-30
@@ -182,19 +176,20 @@ module fp32_div_core (
     // q = Q, 27 bits, in [2^25, 2^27). The rounder wants the kept bits in [26:3]:
     //   normal result    : shift left by nrm (0 or 1)
     //   subnormal result : shift right by d = 1 - E0
-    // Both are done as "pre-shift left by p (0 or 1), then den_k two-bit right steps".
+    // Both are done as "pre-shift left by nrm (normal results only), then den_k one-bit
+    // right steps". Past 31 steps every quotient bit is already sticky, so den_k stops there.
     wire        [26:0] q       = sum[27:1];              // valid in PH_CHK
     wire               nrm     = ~q[26];
     wire               e_neg   = E0[9];
     wire               e_ge1   = (E0 >= 10'sd1);
     wire               e_big   = (E0 >= 10'sd2);
-    wire               e_far   = (E0 < -10'sd28);        // shift of 30 or more: everything is sticky
+    wire               e_far   = (E0 < -10'sd30);        // shift of more than 31: clamp to 31
     wire               e_zero  = ~e_ge1 & ~e_neg;
     wire               e_one   = e_ge1 & ~e_big;
-    wire               pre_l   = e_big ? nrm : ~E0[0];
+    wire               pre_l   = e_big & nrm;
     wire        [27:0] q_pre   = pre_l ? sum[27:0] : {1'b0, sum[27:1]};
-    wire        [4:0]  k_half  = ~E0[5:1] + {3'd0, ~E0[0], E0[0]};    // ceil((1 - E0) / 2), mod 32
-    wire        [4:0]  den_k   = e_ge1 ? 5'd0 : e_far ? 5'd15 : k_half;
+    wire        [4:0]  k_sh    = ~E0[4:0] + 5'd2;                      // 1 - E0, mod 32
+    wire        [5:0]  den_k   = e_ge1 ? 6'd0 : e_far ? 6'd31 : {1'b0, k_sh};
 
     // tininess after rounding: would the normalised quotient round up to the next binade?
     wire               all_u   = &q[25:3];
@@ -207,28 +202,24 @@ module fp32_div_core (
     always @(posedge clk) begin
         if (!run) begin                                  // idle: keep the first multiply set up
             H <= 29'd0;
-            c <= 1'b0;
             M <= pow2 ? {m_s, 4'd0} : {seed(m_s[22:19]), 22'd0};      // q = ma exactly, or x0
             if (start)                                   // L holds the last result until then
                 L <= special_n ? res_spec : {2'b01, resid[29:26], 2'b00, m_s};
-        end else if (cnt != 5'd0) begin                  // multiply step (or plain shift in PH_DEN)
-            H <= sum[30:2];
-            L <= {sum[1:0], L[31:2]};
-            c <= dig[2] | d_sub;
+        end else if (cnt != 6'd0) begin                  // multiply step (or plain shift in PH_DEN)
+            H <= sum[29:1];
+            L <= {sum[0], L[31:1]};
         end else if (ph == PH_CHK) begin                 // hand the quotient to the shifter
             H <= {1'b0, q_pre};
             L <= 32'd0;
-            c <= 1'b0;
             nrm_r  <= nrm;
             tiny_r <= tiny;
         end else if (ph == PH_DEN) begin                 // done: L keeps the packed result
             L <= res_fin;
         end else if (ph != PH_REM) begin                 // phase boundary: load the next multiply
-            // L[31:26] is only scanned in the 16-step phases, so it always loads {01, e[29:26]}.
+            // L[31:26] is only scanned in the 32-step phases, so it always loads {01, e[29:26]}.
             L <= {2'b01, resid[29:26], to_xt ? resid[25:0] : {2'b00, m_s}};
             // PH_QUO starts at 2^25 (+1 at the quotient LSB); PH_REM starts at 2 * (2^24 - 1)
             H <= {3'd0, x_end, {24{q_now}}, 1'b0};
-            c <= 1'b0;
             if (!to_xt)
                 M <= {H[25:0], L[31], L[30] & ~q_now};   // new x, or 2*q1
         end
@@ -270,7 +261,7 @@ module fp32_div_core (
         if (!rst_n) begin
             run    <= 1'b0;
             ph     <= 4'd0;
-            cnt    <= 5'd0;
+            cnt    <= 6'd0;
             flags  <= 5'd0;
             fault  <= 1'b0;
             r_neg  <= 1'b0;
@@ -289,11 +280,11 @@ module fp32_div_core (
                     end else begin
                         run <= 1'b1;
                         ph  <= pow2 ? PH_CHK : PH_BX0;    // early-out skips every multiply
-                        cnt <= pow2 ? 5'd0 : 5'd13;
+                        cnt <= pow2 ? 6'd0 : 6'd26;
                     end
                 end
-            end else if (cnt != 5'd0) begin
-                cnt <= cnt - 5'd1;
+            end else if (cnt != 6'd0) begin
+                cnt <= cnt - 6'd1;
             end else begin
                 case (ph)
                     PH_REM: begin                         // m_s = mb
@@ -315,7 +306,7 @@ module fp32_div_core (
                     end
                     default: begin
                         ph  <= ph + 4'd1;
-                        cnt <= to_xt ? 5'd16 : 5'd13;
+                        cnt <= to_xt ? 6'd32 : 6'd26;
                     end
                 endcase
             end
@@ -330,7 +321,7 @@ module fp32_div_core (
     always @(posedge clk) begin
         if (!run)
             dbg_x0 <= {seed(m_s[22:19]), 22'd0};   // meaningful on the start clock
-        else if (cnt == 5'd0) begin
+        else if (cnt == 6'd0) begin
             if (ph == PH_XT0) dbg_x1 <= {H[25:0], L[31:30]};
             if (ph == PH_XT1) dbg_x2 <= {H[25:0], L[31:30]};
             if (ph == PH_XT2) dbg_x3 <= {H[25:0], L[31:30]};

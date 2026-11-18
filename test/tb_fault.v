@@ -1,7 +1,7 @@
 // Fault-injection campaign for the built-in self-check.
 //
-// For each vector one random bit of the working registers (M, H, L or the recode
-// carry) is inverted at one random clock of the divide - a single-event upset.
+// For each vector one random bit of the working registers (M, H or L) is inverted
+// at one random clock of the divide - a single-event upset.
 // Each run is classified as
 //   masked   : result and flags still correct, fault = 0
 //   detected : fault = 1
@@ -44,8 +44,8 @@ module tb_fault;
         rst_n = 1;
         code = $fscanf(fd, "%h", vec);
         while (code == 1) begin
-            at     = 1 + ({$random(seed)} % 123);    // clock of the divide to hit
-            bitsel = {$random(seed)} % 90;           // 0-27 M, 28-56 H, 57-88 L, 89 c
+            at     = 1 + ({$random(seed)} % 236);    // clock of the divide to hit
+            bitsel = {$random(seed)} % 89;           // 0-27 M, 28-56 H, 57-88 L
             @(negedge clk);
             a = vec[103:72];
             b = vec[71:40];
@@ -59,8 +59,7 @@ module tb_fault;
                     hit_ph   = dut.ph;
                     if      (bitsel < 28) dut.M[bitsel]      = ~dut.M[bitsel];
                     else if (bitsel < 57) dut.H[bitsel - 28] = ~dut.H[bitsel - 28];
-                    else if (bitsel < 89) dut.L[bitsel - 57] = ~dut.L[bitsel - 57];
-                    else                  dut.c              = ~dut.c;
+                    else                  dut.L[bitsel - 57] = ~dut.L[bitsel - 57];
                 end
                 @(negedge clk);
                 cyc = cyc + 1;
